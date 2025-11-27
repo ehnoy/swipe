@@ -1,1 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Swipe</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&display=swap');
 
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #F4A6A6;
+            font-family: 'Chakra Petch', sans-serif;
+            transition: background-color 0.3s ease;
+            touch-action: none;
+            user-select: none;
+        }
+
+        #game-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            transition: filter 0.5s ease;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .blurred {
+            filter: blur(8px);
+            opacity: 0.7;
+        }
+
+        /* --- BAR STYLING --- */
+        .color-bar {
+            position: absolute;
+            border-radius: 50px;
+            border: 3px solid black;
+            /* box-shadow removed */
+            transition: transform 0.1s, filter 0.5s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        #bar-top {
+            width: 120px;
+            height: 25px;
+            background-color: #FF9999;
+            margin-top: -160px;
+        }
+
+        #bar-bottom {
+            width: 120px;
+            height: 25px;
+            background-color: #B5EAD7;
+            margin-top: 160px;
+        }
+
+        #bar-left {
+            width: 25px;
+            height: 120px;
+            background-color: #FFF79A;
+            margin-left: -160px;
+        }
+
+        #bar-right {
+            width: 25px;
+            height: 120px;
+            background-color: #A0C4FF;
+            margin-left: 160px;
+        }
+
+        /* --- TEXT STYLING --- */
+        #timer {
+            position: absolute;
+            top: 10%;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 3rem;
+            color: black;
+            font-weight: 900;
+            letter-spacing: 1px;
+            transition: filter 0.5s ease;
+        }
+
+        #score-container {
+            position: absolute;
+            bottom: 10%;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 20;
+        }
+
+        .score-enlarged {
+            transform: translateX(-50%) scale(2.0) !important;
+        }
+
+        #score {
+            font-size: 4rem;
+            color: black;
+            font-weight: 900;
+        }
+
+        .float-score {
+            position: absolute;
+            color: black;
+            font-weight: bold;
+            font-size: 2.5rem;
+            animation: floatUp 0.8s ease-out forwards;
+            pointer-events: none;
+            z-index: 15;
+        }
+
+        @keyframes floatUp {
+            0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+            20% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+            100% { transform: translate(-50%, -150%) scale(1); opacity: 0; }
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="canvas-container"></div>
+        <div id="ui-layer">
+            <div id="timer">00:30</div>
+            <div id="bar-top" class="color-bar" data-color="red"></div>
+            <div id="bar-bottom" class="color-bar" data-color="green"></div>
+            <div id="bar-left" class="color-bar" data-color="yellow"></div>
+            <div id="bar-right" class="color-bar" data-color="blue"></div>
+            <div id="score-container">
+                <div id="score">0</div>
+            </div>
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+                "three/examples/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+
+        // --- Configuration ---
+        const GAME_DURATION = 30;
+        
+        const COLORS = {
+            red:    { hex: 0xFF9999, css: '#F4A6A6', direction: 'top' },
+            yellow: { hex: 0xFFF79A, css: '#FDFD96', direction: 'left' },
+            blue:   { hex: 0xA0C4FF, css: '#B8D4FF', direction: 'right' },
+            green:  { hex: 0xB5EAD7, css: '#C2F0C2', direction: 'bottom' }
+        };
+
+        // --- State ---
+        let score = 0;
+        let timeLeft = GAME_DURATION;
+        let timerRunning = false;
+        let isGameOver = false;
+        let currentTargetColor = '';
+        let timerInterval;
+        let isAnimating = false;
+
+        // --- DOM Elements ---
+        const scoreEl = document.getElementById('score');
+        const scoreContainer = document.getElementById('score-container');
+        const timerEl = document.getElementById('timer');
+        const body = document.body;
+        const canvasContainer = document.getElementById('canvas-container');
+
+        // --- Three.js Setup ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = 5;
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(2, 5, 5);
+        scene.add(dirLight);
+
+        // --- CUBE (RoundedBox) ---
+        // Size: 0.75
+        const geometry = new RoundedBoxGeometry(0.75, 0.75, 0.75, 4, 0.15); 
+        
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff,
+            roughness: 0.2,
+            metalness: 0.1
+        });
+        const cube = new THREE.Mesh(geometry, material);
+        scene.add(cube);
+
+        const edges = new THREE.EdgesGeometry(geometry, 25);
+        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
+        cube.add(line);
+
+        // --- ROTATION LOGIC ---
+        let targetQuaternion = new THREE.Quaternion();
+        
+        function resetGame() {
+            score = 0;
+            timeLeft = GAME_DURATION;
+            timerRunning = false;
+            isGameOver = false;
+            
+            scoreEl.innerText = '0';
+            timerEl.innerText = formatTime(timeLeft);
+            
+            canvasContainer.classList.remove('blurred');
+            timerEl.classList.remove('blurred');
+            document.querySelectorAll('.color-bar').forEach(bar => bar.classList.remove('blurred'));
+            scoreContainer.classList.remove('score-enlarged');
+
+            cube.rotation.set(0,0,0);
+            cube.quaternion.set(0,0,0,1);
+            targetQuaternion.set(0,0,0,1);
+
+            pickNewColor();
+        }
+
+        function endGame() {
+            isGameOver = true;
+            timerRunning = false;
+            clearInterval(timerInterval);
+            
+            canvasContainer.classList.add('blurred');
+            timerEl.classList.add('blurred');
+            document.querySelectorAll('.color-bar').forEach(bar => bar.classList.add('blurred'));
+            scoreContainer.classList.add('score-enlarged');
+
+            setTimeout(() => {
+                window.addEventListener('click', onInteractReset);
+                window.addEventListener('touchstart', onInteractReset);
+                window.addEventListener('keydown', onInteractReset);
+            }, 500);
+        }
+
+        function onInteractReset(e) {
+            window.removeEventListener('click', onInteractReset);
+            window.removeEventListener('touchstart', onInteractReset);
+            window.removeEventListener('keydown', onInteractReset);
+            resetGame();
+        }
+
+        function startTimer() {
+            timerRunning = true;
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                timerEl.innerText = formatTime(timeLeft);
+                if (timeLeft <= 0) {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function formatTime(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+        }
+
+        function pickNewColor() {
+            const keys = Object.keys(COLORS);
+            const randomKey = keys[Math.floor(Math.random() * keys.length)];
+            currentTargetColor = randomKey;
+            const colorData = COLORS[randomKey];
+            body.style.backgroundColor = colorData.css;
+        }
+
+        function checkInput(direction) {
+            if (isGameOver) return;
+
+            const correctDirection = COLORS[currentTargetColor].direction;
+
+            if (direction === correctDirection) {
+                if (!timerRunning) {
+                    startTimer();
+                }
+
+                score++;
+                scoreEl.innerText = score;
+                createFloatingScore('+1', window.innerWidth/2, window.innerHeight/2);
+                pickNewColor();
+            } else {
+                // Negative scoring only if timer is running (game started)
+                if (timerRunning) {
+                    score--;
+                    scoreEl.innerText = score;
+                    createFloatingScore('-1', window.innerWidth/2, window.innerHeight/2, '#D32F2F');
+                }
+
+                document.getElementById('game-container').style.transform = "translateX(10px)";
+                setTimeout(() => {
+                    document.getElementById('game-container').style.transform = "translateX(-10px)";
+                    setTimeout(() => {
+                        document.getElementById('game-container').style.transform = "translateX(0)";
+                    }, 50);
+                }, 50);
+            }
+        }
+
+        function createFloatingScore(text, x, y, color = 'black') {
+            const el = document.createElement('div');
+            el.classList.add('float-score');
+            el.innerText = text;
+            el.style.left = x + 'px';
+            el.style.top = y + 'px';
+            el.style.color = color;
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 800);
+        }
+
+        // --- Interaction Handlers ---
+        let startX, startY;
+        const MIN_SWIPE_DIST = 30;
+
+        document.addEventListener('touchstart', (e) => {
+            if (isGameOver) return;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+        }, {passive: false});
+
+        document.addEventListener('touchend', (e) => {
+            if (isGameOver || !startX || !startY) return;
+            handleSwipeInput(startX, startY, e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+            startX = null; startY = null;
+        }, {passive: false});
+
+        document.addEventListener('mousedown', (e) => {
+            if (isGameOver) return;
+            startX = e.clientX;
+            startY = e.clientY;
+        });
+
+        document.addEventListener('mouseup', (e) => {
+            if (isGameOver || !startX || !startY) return;
+            handleSwipeInput(startX, startY, e.clientX, e.clientY);
+            startX = null; startY = null;
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (isGameOver || isAnimating) return;
+            switch(e.key.toLowerCase()) {
+                case 'w': case 'arrowup':    spinCube('up'); checkInput('top'); break;
+                case 'a': case 'arrowleft':  spinCube('left'); checkInput('left'); break;
+                case 's': case 'arrowdown':  spinCube('down'); checkInput('bottom'); break;
+                case 'd': case 'arrowright': spinCube('right'); checkInput('right'); break;
+            }
+        });
+
+        function handleSwipeInput(x1, y1, x2, y2) {
+            if (isGameOver || isAnimating) return;
+            const diffX = x2 - x1;
+            const diffY = y2 - y1;
+
+            if (Math.abs(diffX) < MIN_SWIPE_DIST && Math.abs(diffY) < MIN_SWIPE_DIST) return;
+
+            if (Math.abs(diffX) > Math.abs(diffY)) {
+                if (diffX > 0) { spinCube('right'); checkInput('right'); }
+                else { spinCube('left'); checkInput('left'); }
+            } else {
+                if (diffY > 0) { spinCube('down'); checkInput('bottom'); }
+                else { spinCube('up'); checkInput('top'); }
+            }
+        }
+
+        function spinCube(direction) {
+            isAnimating = true;
+            const axis = new THREE.Vector3(0, 0, 0);
+            let angle = 0;
+
+            switch(direction) {
+                case 'right': axis.set(0, 1, 0); angle = Math.PI / 2; break;
+                case 'left':  axis.set(0, 1, 0); angle = -Math.PI / 2; break;
+                case 'up':    axis.set(1, 0, 0); angle = -Math.PI / 2; break;
+                case 'down':  axis.set(1, 0, 0); angle = Math.PI / 2; break;
+            }
+
+            const deltaQuat = new THREE.Quaternion();
+            deltaQuat.setFromAxisAngle(axis, angle);
+            targetQuaternion.premultiply(deltaQuat);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (!isGameOver) {
+                if (isAnimating) {
+                    cube.quaternion.slerp(targetQuaternion, 0.25);
+                    if (cube.quaternion.angleTo(targetQuaternion) < 0.05) {
+                        cube.quaternion.copy(targetQuaternion);
+                        cube.quaternion.set(0, 0, 0, 1);
+                        targetQuaternion.set(0, 0, 0, 1);
+                        isAnimating = false;
+                    }
+                }
+                const time = Date.now() * 0.002;
+                const scale = 1 + Math.sin(time * 2) * 0.05;
+                cube.scale.set(scale, scale, scale);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        resetGame();
+        animate();
+
+    </script>
+</body>
+</html>
