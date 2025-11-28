@@ -433,8 +433,6 @@
                     cube.quaternion.slerp(targetQuaternion, 0.25);
                     if (cube.quaternion.angleTo(targetQuaternion) < 0.05) {
                         cube.quaternion.copy(targetQuaternion);
-                        cube.quaternion.set(0, 0, 0, 1);
-                        targetQuaternion.set(0, 0, 0, 1);
                         isAnimating = false;
                     }
                 }
